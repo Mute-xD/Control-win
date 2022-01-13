@@ -1,43 +1,43 @@
+#include "stdafx.h"
 #include "Network.h"
 
-Network::Network(int port)
+Network::Network(int port, Status* status)
 {
 	WORD socketVersion = MAKEWORD(2, 2);
 	WSADATA wsaData;
 	if (WSAStartup(socketVersion, &wsaData) != 0)
 	{
-		perror("StartUp ERROR");
+		status->msg->insert("StartUp ERROR");
 	}
 	hostent* phst = gethostbyname("local.mutexxd.cn");
-	if (!phst)
+	if (phst == nullptr)
 	{
-		perror("DNS ERROR");
+		status->msg->insert("DNS ERROR");
 	}
 	in_addr* iddr = (in_addr*)phst->h_addr;
 	const char* ip = inet_ntoa(*iddr);
-	std::cout << "Remote IP: " << ip << std::endl;
+	status->msg->insert(std::string("Remote IP: ")+ip);
 
 	this->sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (sock == INVALID_SOCKET)
 	{
-		perror("StartUp ERROR");
+		status->msg->insert("StartUp ERROR");
 	}
 	serverSockAddress.sin_family = AF_INET;
 	serverSockAddress.sin_addr.S_un.S_addr = inet_addr(ip);
 	serverSockAddress.sin_port = htons(port);
-
+	this->status = status;
 }
 
 void Network::Connect()
 {
-	std::cout << "Connecting to Server..." << std::endl;
-
+	status->msg->insert("Connecting to Server...");
 	if (connect(this->sock, (struct sockaddr*)&serverSockAddress, sizeof(serverSockAddress)) == SOCKET_ERROR)
 	{
-		perror("Connect Failure");
+		status->msg->insert("Connect Failure");
 		closesocket(this->sock);
 	}
-	std::cout << "Server Connected!" << std::endl;
+	status->msg->insert("Server Connected!");
 }
 
 void Network::Send(BYTE* data, int dataLen)
@@ -45,7 +45,8 @@ void Network::Send(BYTE* data, int dataLen)
 	int dataLenTotal = dataLen + HEADER_SIZE + 4;
 	if (dataLenTotal > BUFFER)
 	{
-		perror("Package too big");
+		status->msg->insert("Package too big");
+		return;
 	}
 	BYTE dataBuffer[BUFFER];
 	dataBuffer[0] = 0xEF; dataBuffer[1] = 0xEF; dataBuffer[2] = 0xEF; dataBuffer[3] = 0xEF;
@@ -137,19 +138,11 @@ void Network::Recv()
 	}	
 }
 
-void Network::RegistStatus(Status& status1)
-{
-	{
-		this->status = &status1;
-	}
-}
 
 void Network::RecvProcess(BYTE* frameData, int dataLen)
 {
 	BYTE path = frameData[0];
 	BYTE type = frameData[1];
-	BYTE temp;
-	bool what;
 	switch (path)
 	{
 	case '0':
@@ -160,50 +153,67 @@ void Network::RecvProcess(BYTE* frameData, int dataLen)
 		{
 		case '0':
 			// s2u command
+		{
 			break;
+		}
 		case '1':
 			// s2u status
+		{
 			if (frameData[2] == '6' && frameData[3] == '6' && frameData[4] == '6')
 			{
-				std::cout << "*" << std::endl;
+				status->msg->insert("OK");
 				status->isServerAlive = true;
 			}
 			break;
+		}
 		case '2':
 			// s2u message
-			std::cout << "Message From Server" << std::endl;
+		{
+			std::string msg;
+			status->msg->insert("Message From Server");
 			for (auto i = 2; i < dataLen; i++)
 			{
-				std::cout << frameData[i];
+				msg.push_back(frameData[i]);
 			}
-			std::cout << std::endl;
+			status->msg->insert(msg);
 			break;
+		}
 		default:
+		{
 			unexpectedPack(frameData, dataLen);
 			break;
+		}
 		}
 	case '6':
 		switch (type)
 		{
 		case '0':
 			// d2u command
+		{
 			break;
+		}
 		case '1':
 			// d2u status
-
+		{
 			break;
+		}
 		case '2':
-			// u2s message
-			std::cout << "Message From Downer" << std::endl;
+			// d2u message
+		{
+			std::string msg;
+			status->msg->insert("Message From Downer");
 			for (auto i = 2; i < dataLen; i++)
 			{
-				std::cout << frameData[i];
+				msg.push_back(frameData[i]);
 			}
-			std::cout << std::endl;
+			status->msg->insert(msg);
 			break;
+		}
 		default:
+		{
 			unexpectedPack(frameData, dataLen);
 			break;
+		}
 		}
 		break;
 	default:
@@ -213,7 +223,7 @@ void Network::RecvProcess(BYTE* frameData, int dataLen)
 
 void Network::unexpectedPack(BYTE* frameData, int dataLen)
 {
-	std::cout << "Unexpected Packet Received!" << std::endl;
+	status->msg->insert("WARNING: Unexpected Packet Received!");
 	std::cout << "Flag is ->" << frameData[0] << std::endl;
 	std::cout << "Type is ->" << frameData[1] << std::endl;
 	for (auto i = 2; i < dataLen; i++)
@@ -229,10 +239,9 @@ void* networkThread(void* data)
 
 	while (!threadData->status->isExit)
 	{
-		auto* net = new Network(threadData->port);
-		net->RegistStatus(*threadData->status);
+		auto* net = new Network(threadData->port, threadData->status);
 		net->Connect();
-		std::cout << "Start Listening on " << threadData->port << std::endl;
+		threadData->status->msg->insert(std::string("Start Listening on ") + std::to_string(threadData->port));
 		net->isDisconnected = false;
 		DeamonThreadData deamonData{net, threadData->status};
 		std::thread tDeamonSet(deamonSetThread, (void*)&deamonData);
@@ -244,7 +253,7 @@ void* networkThread(void* data)
 		closesocket(net->sock);
 		tDeamonSet.join();
 		tDeamonCheck.join();
-		std::cout << "Disconnected! Reset in 5 Sec" << std::endl;
+		threadData->status->msg->insert("Disconnected! Reset in 5 Sec");
 		Sleep(5000);
 
 	}
@@ -267,9 +276,9 @@ void* deamonSetThread(void* data)
 		Sleep(PULSE);
 		BYTE* pulsePack = (BYTE*)"31666";
 		threadData->net->Send(pulsePack, 6);
-		std::cout << "Daemon: Pulse Sent" << std::endl;
+		threadData->status->msg->insert("Daemon: Pulse Sent");
 	}
-	std::cout << "Daemon: Set Exit" << std::endl;
+	threadData->status->msg->insert("Daemon: Set Exit");
 	return nullptr;
 }
 
@@ -285,10 +294,10 @@ void* deamonCheckThread(void* data)
 		}
 		else
 		{
-			std::cout << "Daemon: Remote No Response" << std::endl;
+			threadData->status->msg->insert("Daemon: Remote No Response");
 			threadData->net->isDisconnected = true;
 		}
 	}
-	std::cout << "Daemon: Check Exit" << std::endl;
+	threadData->status->msg->insert("Daemon: Check Exit");
 	return nullptr;
 }

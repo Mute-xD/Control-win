@@ -13,13 +13,12 @@ constexpr auto PORT = 62629;
 class Network
 {
 public:
-	Network(int port);
+	Network(int port, Status* status);
 	void Connect();
 	SOCKET sock;
 
 	void Send(BYTE *data, int dataLen);
 	void Recv();
-	void RegistStatus(Status& status1);
 
 	bool isDisconnected = false;
 private:
